@@ -1,0 +1,45 @@
+{
+    "intervalos_servidores": {
+        "ABEL": [
+            [
+                1,
+                17
+            ]
+        ],
+        "CARLOS": [
+            [
+                18,
+                34
+            ]
+        ],
+        "JACKMARA": [
+            [
+                35,
+                51
+            ]
+        ],
+        "LEIDIANE": [
+            [
+                52,
+                68
+            ]
+        ],
+        "TANIA": [
+            [
+                69,
+                85
+            ]
+        ],
+        "ENEIDA": [
+            [
+                86,
+                99
+            ],
+            [
+                0,
+                0
+            ]
+        ]
+    },
+    "coluna_processos": "numeroProcesso"
+}
