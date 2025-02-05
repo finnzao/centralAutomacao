@@ -12,7 +12,10 @@ st.set_page_config(
 
 # Título da página
 st.title("📊 Dashboard Meta 2 - Análise de Processos")
-
+#markdown
+st.markdown("""
+As planilhas recomendadas para upload, a fim de garantir um bom funcionamento, são aquelas que contêm o acervo completo de todos os processos, utilizando a extensão PJe R+.
+""")
 # Upload de arquivo único (CSV ou XLSX)
 st.sidebar.header("📂 Upload de Arquivo")
 uploaded_file = st.sidebar.file_uploader("Envie o arquivo de processos (CSV ou Excel)", type=["csv", "xlsx"])
