@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from utils.fileHandler import FileHandler  # Importação do handler de arquivos
+from utils.fileHandler import FileHandler  # Responsável por ler CSV/XLSX
 import re
 
 st.set_page_config(
@@ -10,80 +10,153 @@ st.set_page_config(
     page_icon="📊",
 )
 
-# Título da página
+# Título e descrição
 st.title("📊 Dashboard Meta 2 - Análise de Processos")
-#markdown
 st.markdown("""
-As planilhas recomendadas para upload, a fim de garantir um bom funcionamento, são aquelas que contêm o acervo completo de todos os processos, utilizando a extensão PJe R+.
+As planilhas recomendadas para upload são aquelas que contêm o acervo completo de todos os processos, 
+utilizando a extensão PJe R+.
 """)
-# Upload de arquivo único (CSV ou XLSX)
-st.sidebar.header("📂 Upload de Arquivo")
+
+# =============================
+# Sidebar: Configurações Gerais
+# =============================
+st.sidebar.header("📂 Upload e Configurações")
 uploaded_file = st.sidebar.file_uploader("Envie o arquivo de processos (CSV ou Excel)", type=["csv", "xlsx"])
 
-# Configuração do ano padrão para Meta 2
 st.sidebar.subheader("📅 Configuração de Meta 2")
 ano_meta2 = st.sidebar.number_input(
     "Escolha o ano a partir do qual os processos NÃO são Meta 2:",
     min_value=1900, max_value=2100, value=2021
 )
 
-# Função para extrair o ano do número do processo
+# Colunas a exibir na ordem desejada (para o arquivo final)
+default_columns = [
+    "numeroProcesso",
+    "diasEmAberto",
+    "Dígito",
+    "Ano Processo",
+    "Servidor",
+    "Meta 2 Classificação",
+    "ultimoMovimento",
+    "nomeTarefa"
+]
+selected_columns = st.sidebar.multiselect("Selecione as colunas para exibição:",
+                                            options=default_columns, default=default_columns)
+
+# =============================
+# Sidebar: Remoção de valores na coluna "nomeTarefa"
+# =============================
+st.sidebar.subheader("🗑️ Remover valores de nomeTarefa")
+if uploaded_file is not None:
+    # Lê o arquivo temporariamente para extrair os valores únicos de "nomeTarefa"
+    temp_df = FileHandler.read_file(
+        uploaded_file,
+        "xlsx" if uploaded_file.name.endswith(".xlsx") else "csv",
+        {"coluna_processos": "numeroProcesso"}
+    )
+    unique_tasks = temp_df["nomeTarefa"].unique().tolist() if "nomeTarefa" in temp_df.columns else []
+else:
+    unique_tasks = []
+default_remove = ["Arquivar processo"] if "Arquivar processo" in unique_tasks else []
+tasks_to_remove = st.sidebar.multiselect("Selecione os valores para remover:", options=unique_tasks, default=default_remove)
+
+# =============================
+# Funções de Processamento
+# =============================
 def extrair_ano_processo(numero):
-    match_ano = re.search(r'\d{7}-\d{2}\.(\d{4})\.', str(numero))  # Captura os quatro dígitos do ano
+    match_ano = re.search(r'\d{7}-\d{2}\.(\d{4})\.', str(numero))
     return int(match_ano.group(1)) if match_ano else None
 
-# Função para classificar processos na Meta 2
-def classificar_meta2(ano_processo):
+def classificar_meta2_func(ano_processo):
     if ano_processo is None:
         return "Desconhecido"
-    elif ano_processo < ano_meta2:  # Usa o ano configurado pelo usuário
+    elif ano_processo < ano_meta2:
         return "Meta 2"
     else:
         return "Fora da Meta 2"
 
+def atribuir_servidor(digito, config_servers):
+    for server, intervals in config_servers.items():
+        for interval in intervals:
+            if interval[0] <= digito <= interval[1]:
+                return server
+    return "Desconhecido"
+
+# =============================
 # Processamento do arquivo enviado
+# =============================
 if uploaded_file:
     with st.spinner("⏳ Processando o arquivo..."):
-        # Determinar o tipo do arquivo
         file_type = "xlsx" if uploaded_file.name.endswith(".xlsx") else "csv"
-        
-        # Ler o arquivo utilizando FileHandler
+        # Ler o arquivo (df conterá todas as colunas)
         df = FileHandler.read_file(uploaded_file, file_type, {"coluna_processos": "numeroProcesso"})
-
-        # Criar coluna do ano do processo
+        
+        # Verificar e formatar a coluna "ultimoMovimento"
+        if "ultimoMovimento" in df.columns:
+            df["ultimoMovimento"] = pd.to_datetime(df["ultimoMovimento"], errors="coerce")
+            df = df.sort_values(by="ultimoMovimento", ascending=True)
+            df["ultimoMovimento"] = df["ultimoMovimento"].dt.strftime("%d/%m/%Y")
+        
+        # Criar coluna do ano do processo e classificar Meta 2
         df["Ano Processo"] = df["numeroProcesso"].apply(extrair_ano_processo)
-
-        # Criar classificação da Meta 2
-        df["Meta 2 Classificação"] = df["Ano Processo"].apply(classificar_meta2)
-
-        # ✅ Criar colunas "nomeTarefa" e "orgaoJulgador" se não existirem
+        df["Meta 2 Classificação"] = df["Ano Processo"].apply(classificar_meta2_func)
+        
+        # Garantir a existência de colunas obrigatórias
         for col in ["nomeTarefa", "orgaoJulgador"]:
             if col not in df.columns:
                 df[col] = "Desconhecido"
-            df[col] = df[col].fillna("Desconhecido")
-
-        # Salvar o resultado
+            else:
+                df[col] = df[col].fillna("Desconhecido")
+        for col in ["diasEmAberto"]:
+            if col not in df.columns:
+                df[col] = "Desconhecido"
+            else:
+                df[col] = df[col].fillna("Desconhecido")
+        
+        # Criar a coluna "Servidor" a partir da coluna "Dígito"
+        config_servers = {
+            "ABEL": [[1, 19]],
+            "CARLOS": [[20, 39]],
+            "JACKMARA": [[40, 59]],
+            "LEIDIANE": [[60, 79]],
+            "TANIA": [[80, 99]]
+        }
+        if "Dígito" in df.columns:
+            df["Servidor"] = df["Dígito"].apply(lambda x: atribuir_servidor(x, config_servers))
+        else:
+            df["Servidor"] = "Desconhecido"
+        
+        # Remover os valores selecionados da coluna "nomeTarefa"
+        if tasks_to_remove:
+            df = df[~df["nomeTarefa"].isin(tasks_to_remove)]
+            st.sidebar.success("Valores removidos de 'nomeTarefa' com sucesso!")
+        
+        # Para o arquivo final de download, manter somente as colunas selecionadas
+        # Mas para os gráficos, usaremos o DataFrame completo (df)
+        for col in default_columns:
+            if col not in df.columns:
+                df[col] = "Desconhecido"
+        df_final = df[selected_columns]
+        
+        # Salvar o resultado final
         output_file = "processos_classificados.xlsx"
-        df.to_excel(output_file, index=False)
-
+        df_final.to_excel(output_file, index=False)
         st.success("✅ Arquivo processado com sucesso!")
-
-        # Criar Gráficos
+        
+        # =============================
+        # Criação dos Gráficos (usando df, que contém "orgaoJulgador")
+        # =============================
         st.subheader("📊 Distribuição de Processos por nomeTarefa e Órgão Julgador")
-
-        # Agrupar dados e calcular quantidades e porcentagens
         df_counts = df.groupby(["nomeTarefa", "orgaoJulgador"]).size().reset_index(name="quantidade")
         total_processos = df_counts["quantidade"].sum()
         df_counts["porcentagem"] = (df_counts["quantidade"] / total_processos) * 100
 
-        # Criar figura com subplots
         fig = make_subplots(
             rows=1, cols=2,
             specs=[[{"type": "domain"}, {"type": "table"}]],
             column_widths=[0.6, 0.4]
         )
 
-        # Criar gráfico Sunburst
         df_nomeTarefa_total = df.groupby("nomeTarefa").size().reset_index(name="quantidade")
         df_sunburst_nomeTarefa = pd.DataFrame({
             "id": df_nomeTarefa_total["nomeTarefa"],
@@ -111,12 +184,11 @@ if uploaded_file:
         )
         fig.add_trace(sunburst_trace, row=1, col=1)
 
-        # Criar tabela de dados com novas cores
         table_trace = go.Table(
             header=dict(
                 values=["<b>nomeTarefa</b>", "<b>Órgão Julgador</b>", "<b>Quantidade</b>", "<b>Porcentagem (%)</b>"],
-                fill_color="#4caf50",  # Verde escuro no cabeçalho
-                font_color="white",  # Texto branco
+                fill_color="#4caf50",
+                font_color="white",
                 align="center",
                 font_size=12
             ),
@@ -127,23 +199,19 @@ if uploaded_file:
                     df_counts["quantidade"],
                     df_counts["porcentagem"].round(2)
                 ],
-                fill_color="#f8f9fa",  # Fundo claro nas células
-                font_color="#212529",  # Texto escuro
+                fill_color="#f8f9fa",
+                font_color="#212529",
                 align="left",
                 font_size=11
             )
         )
         fig.add_trace(table_trace, row=1, col=2)
-
         fig.update_layout(
             title_text="Distribuição de Processos por nomeTarefa e Órgão Julgador",
             showlegend=False
         )
-
-        # Exibir gráfico
         st.plotly_chart(fig, use_container_width=True)
 
-        # Botão para download do arquivo processado
         with open(output_file, "rb") as f:
             st.download_button(
                 label="📥 Baixar Arquivo Processado",
