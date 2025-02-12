@@ -18,7 +18,7 @@ utilizando a extensão PJe R+.
 """)
 
 # =============================
-# Sidebar: Configurações Gerais
+# Sidebar: Upload e Configurações Gerais
 # =============================
 st.sidebar.header("📂 Upload e Configurações")
 uploaded_file = st.sidebar.file_uploader("Envie o arquivo de processos (CSV ou Excel)", type=["csv", "xlsx"])
@@ -29,7 +29,7 @@ ano_meta2 = st.sidebar.number_input(
     min_value=1900, max_value=2100, value=2021
 )
 
-# Colunas a exibir na ordem desejada (para o arquivo final)
+# Colunas a exibir no arquivo final (ordem desejada)
 default_columns = [
     "numeroProcesso",
     "diasEmAberto",
@@ -48,7 +48,6 @@ selected_columns = st.sidebar.multiselect("Selecione as colunas para exibição:
 # =============================
 st.sidebar.subheader("🗑️ Remover valores de nomeTarefa")
 if uploaded_file is not None:
-    # Lê o arquivo temporariamente para extrair os valores únicos de "nomeTarefa"
     temp_df = FileHandler.read_file(
         uploaded_file,
         "xlsx" if uploaded_file.name.endswith(".xlsx") else "csv",
@@ -88,7 +87,6 @@ def atribuir_servidor(digito, config_servers):
 if uploaded_file:
     with st.spinner("⏳ Processando o arquivo..."):
         file_type = "xlsx" if uploaded_file.name.endswith(".xlsx") else "csv"
-        # Ler o arquivo (df conterá todas as colunas)
         df = FileHandler.read_file(uploaded_file, file_type, {"coluna_processos": "numeroProcesso"})
         
         # Verificar e formatar a coluna "ultimoMovimento"
@@ -97,23 +95,23 @@ if uploaded_file:
             df = df.sort_values(by="ultimoMovimento", ascending=True)
             df["ultimoMovimento"] = df["ultimoMovimento"].dt.strftime("%d/%m/%Y")
         
-        # Criar coluna do ano do processo e classificar Meta 2
+        # Criar coluna do ano do processo e classificação Meta 2
         df["Ano Processo"] = df["numeroProcesso"].apply(extrair_ano_processo)
         df["Meta 2 Classificação"] = df["Ano Processo"].apply(classificar_meta2_func)
         
-        # Garantir a existência de colunas obrigatórias
+        # Garantir a existência das colunas "nomeTarefa" e "orgaoJulgador"
         for col in ["nomeTarefa", "orgaoJulgador"]:
             if col not in df.columns:
                 df[col] = "Desconhecido"
             else:
                 df[col] = df[col].fillna("Desconhecido")
-        for col in ["diasEmAberto"]:
-            if col not in df.columns:
-                df[col] = "Desconhecido"
-            else:
-                df[col] = df[col].fillna("Desconhecido")
+        # Garantir também a existência de "diasEmAberto"
+        if "diasEmAberto" not in df.columns:
+            df["diasEmAberto"] = "Desconhecido"
+        else:
+            df["diasEmAberto"] = df["diasEmAberto"].fillna("Desconhecido")
         
-        # Criar a coluna "Servidor" a partir da coluna "Dígito"
+        # Configuração de servidores para atribuir o nome do servidor a partir do "Dígito"
         config_servers = {
             "ABEL": [[1, 19]],
             "CARLOS": [[20, 39]],
@@ -131,25 +129,38 @@ if uploaded_file:
             df = df[~df["nomeTarefa"].isin(tasks_to_remove)]
             st.sidebar.success("Valores removidos de 'nomeTarefa' com sucesso!")
         
-        # Para o arquivo final de download, manter somente as colunas selecionadas
-        # Mas para os gráficos, usaremos o DataFrame completo (df)
+        # Criar um DataFrame final para download com as colunas selecionadas
         for col in default_columns:
             if col not in df.columns:
                 df[col] = "Desconhecido"
         df_final = df[selected_columns]
         
-        # Salvar o resultado final
+        # =============================
+        # Salvar o resultado em múltiplas sheets, uma para cada servidor
+        # =============================
         output_file = "processos_classificados.xlsx"
-        df_final.to_excel(output_file, index=False)
-        st.success("✅ Arquivo processado com sucesso!")
+        with pd.ExcelWriter(output_file, engine="openpyxl") as writer:
+            # Sheet Resumo com as colunas selecionadas
+            df_final.to_excel(writer, sheet_name="Resumo", index=False)
+            # Cria uma sheet para cada servidor presente na coluna "Servidor"
+            for server in df["Servidor"].unique():
+                df_server = df[df["Servidor"] == server]
+                df_server = df_server[selected_columns]
+                sheet_name = server[:31]  # Nome da sheet limitado a 31 caracteres
+                df_server.to_excel(writer, sheet_name=sheet_name, index=False)
+        
+        st.success("✅ Arquivo processado e salvo em múltiplas sheets com sucesso!")
         
         # =============================
-        # Criação dos Gráficos (usando df, que contém "orgaoJulgador")
+        # Criação dos Gráficos (usando o DataFrame completo df)
         # =============================
         st.subheader("📊 Distribuição de Processos por nomeTarefa e Órgão Julgador")
         df_counts = df.groupby(["nomeTarefa", "orgaoJulgador"]).size().reset_index(name="quantidade")
         total_processos = df_counts["quantidade"].sum()
         df_counts["porcentagem"] = (df_counts["quantidade"] / total_processos) * 100
+
+        # Organiza os dados da tabela em ordem decrescente da porcentagem
+        df_counts = df_counts.sort_values(by="porcentagem", ascending=False)
 
         fig = make_subplots(
             rows=1, cols=2,
