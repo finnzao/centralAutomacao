@@ -4,31 +4,38 @@ from csv import Sniffer
 class FileHandler:
     """Classe utilitária para manipulação de arquivos CSV e Excel."""
     
+
     @staticmethod
     def read_file(file, file_type, config):
-        """
-        Lê um arquivo CSV ou Excel, realiza o pré-processamento inicial e retorna um DataFrame.
-        
-        Args:
-            file: O arquivo enviado pelo usuário.
-            file_type: Tipo do arquivo ('csv' ou 'xlsx').
-            config: Configuração contendo a coluna de processos.
-        
-        Returns:
-            pd.DataFrame: DataFrame com os dados lidos e pré-processados.
-        """
         if file_type == "xlsx":
             df = pd.read_excel(file)
         elif file_type == "csv":
-            # Detecta o delimitador e o caractere de aspas; utiliza fallback se necessário.
-            delimiter, quotechar = FileHandler.detect_csv_properties(file)
-            df = pd.read_csv(file, delimiter=delimiter, quotechar=quotechar)
+            try:
+                df = pd.read_csv(
+                    file,
+                    delimiter=";",
+                    quotechar='"',
+                    encoding="utf-8",
+                    engine="python",
+                    on_bad_lines="skip"
+                )
+            except Exception:
+                file.seek(0)
+                delimiter, quotechar = FileHandler.detect_csv_properties(file)
+                df = pd.read_csv(
+                    file,
+                    delimiter=delimiter,
+                    quotechar=quotechar,
+                    encoding="utf-8",
+                    engine="python",
+                    on_bad_lines="skip"
+                )
         else:
             raise ValueError("Tipo de arquivo não suportado. Apenas CSV e XLSX são aceitos.")
         
-        # Pré-processa o DataFrame (verifica a coluna de processos e extrai o dígito)
         df = FileHandler.preprocess_dataframe(df, config)
         return df
+
 
     @staticmethod
     def detect_csv_properties(file):

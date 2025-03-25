@@ -1,4 +1,3 @@
-# intervaloServidores.py
 import streamlit as st
 import json
 import os
@@ -17,7 +16,7 @@ st.markdown("""
 Esta página permite configurar e ajustar os intervalos de servidores para automação de processos.
 """)
 # Caminho do arquivo de configuração
-CONFIG_FILE = "../configuracao_servidores.json"
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 
 # Função para atribuir servidor
 def atribuir_servidor(digito, configuracao):
