@@ -1,21 +1,21 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import plotly.express as px
 from utils.fileHandler import FileHandler
 import json
 import os
 import re
+import io
 
 # =============================
 # Configuração da página
 # =============================
 st.set_page_config(
-    page_title="Dashboard Meta 2",
+    page_title="Dashboard",
     page_icon="📊",
 )
 
-st.title(":bar_chart: Dashboard Meta 2 - Análise de Processos")
+st.title(":bar_chart: Dashboard  - Análise de Processos")
 st.markdown("""
 As planilhas recomendadas para upload são aquelas que contêm o acervo completo de todos os processos, 
 utilizando a extensão PJe R+.
@@ -28,29 +28,24 @@ st.sidebar.header(":open_file_folder: Upload e Configurações")
 uploaded_file = st.sidebar.file_uploader("Envie o arquivo de processos (CSV ou Excel)", type=["csv", "xlsx"])
 
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
-# =============================
-# Carrega a configuração do JSON
-# =============================
+
 if os.path.exists(CONFIG_FILE):
     with open(CONFIG_FILE, "r", encoding="utf-8") as f:
         configuracao = json.load(f)
 else:
     configuracao = {
         "intervalos_servidores": {
-                "Abel": [[1, 17]],
-                "Carlos": [[18, 34]],
-                "Jackmara": [[35, 51]],
-                "LEIDIANE": [[52, 68]],
-                "Tânia": [[69, 85]],
-                "Eneida": [[86, 99], [0, 0]]
-            },
+            "Abel": [[1, 17]],
+            "Carlos": [[18, 34]],
+            "Jackmara": [[35, 51]],
+            "LEIDIANE": [[52, 68]],
+            "Tânia": [[69, 85]],
+            "Eneida": [[86, 99], [0, 0]]
+        },
         "coluna_processos": "numeroProcesso",
         "ano_meta2": 2021
     }
 
-# =============================
-# Sidebar: Configuração interativa dos servidores
-# =============================
 coluna_processos = st.sidebar.text_input("Nome da coluna de número do processo:", value=configuracao.get("coluna_processos", "numeroProcesso"))
 configuracao["coluna_processos"] = coluna_processos
 
@@ -95,9 +90,6 @@ if st.sidebar.button("Salvar configuração"):
         json.dump(configuracao, f, indent=4)
     st.sidebar.success("Configuração salva com sucesso!")
 
-# =============================
-# Configuração Meta 2
-# =============================
 st.sidebar.subheader(":calendar: Configuração de Meta 2")
 ano_meta2 = st.sidebar.number_input("Ano a partir do qual os processos não são Meta 2:", min_value=1900, max_value=2100, value=configuracao.get("ano_meta2", 2021))
 configuracao["ano_meta2"] = ano_meta2
@@ -106,7 +98,7 @@ configuracao["ano_meta2"] = ano_meta2
 # Funções auxiliares
 # =============================
 def extrair_ano_processo(numero):
-    match_ano = re.search(r'\d{7}-\d{2}\\.(\d{4})\\.', str(numero))
+    match_ano = re.search(r'\d{7}-\d{2}\.(\d{4})\.', str(numero))
     return int(match_ano.group(1)) if match_ano else None
 
 def classificar_meta2_func(ano_processo):
@@ -124,6 +116,67 @@ def atribuir_servidor(digito, configuracao):
                 return servidor
     return "Desconhecido"
 
+def exibir_dashboard_assunto_principal(df: pd.DataFrame):
+    if "assuntoPrincipal" not in df.columns:
+        st.warning("A coluna 'assuntoPrincipal' não foi encontrada.")
+        return
+
+    st.subheader("📌 Análise por Assunto Principal")
+
+    assunto_counts = df["assuntoPrincipal"].value_counts().reset_index()
+    assunto_counts.columns = ["Assunto", "Quantidade"]
+
+    fig = px.pie(assunto_counts, names="Assunto", values="Quantidade", title="Distribuição dos Assuntos Principais")
+    st.plotly_chart(fig)
+
+    st.markdown("#### Tabela de Frequência por Assunto")
+    st.dataframe(assunto_counts)
+
+    st.download_button(
+        label="Baixar CSV dos Assuntos",
+        data=assunto_counts.to_csv(index=False).encode("utf-8"),
+        file_name="assuntos_ordenados.csv",
+        mime="text/csv"
+    )
+
+    assunto_selecionado = st.selectbox("Selecione um assunto para exportar os processos relacionados:", assunto_counts["Assunto"].tolist())
+    df_filtrado = df[df["assuntoPrincipal"] == assunto_selecionado]
+
+    buffer = io.BytesIO()
+    df_filtrado.to_excel(buffer, index=False, engine="openpyxl")
+    buffer.seek(0)
+
+    st.download_button(
+        label=f"Baixar processos do assunto: {assunto_selecionado}",
+        data=buffer,
+        file_name=f"{assunto_selecionado}_processos.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+def exibir_analise_nome_tarefa(df: pd.DataFrame):
+    if "nomeTarefa" not in df.columns:
+        st.warning("A coluna 'nomeTarefa' não foi encontrada.")
+        return
+
+    st.subheader("📝 Análise de Tarefas com Mais Processos Meta 2")
+
+    meta2_df = df[df["Meta 2 Classificacao"] == "Meta 2"]
+    tarefa_counts = meta2_df["nomeTarefa"].value_counts().reset_index()
+    tarefa_counts.columns = ["Tarefa", "Quantidade"]
+
+    fig = px.bar(tarefa_counts, x="Tarefa", y="Quantidade", title="Tarefas com Mais Processos Meta 2")
+    st.plotly_chart(fig)
+
+    st.markdown("#### Tabela de Frequência de Tarefas (Meta 2)")
+    st.dataframe(tarefa_counts)
+
+    st.download_button(
+        label="Baixar CSV de Tarefas Meta 2",
+        data=tarefa_counts.to_csv(index=False).encode("utf-8"),
+        file_name="tarefas_meta2.csv",
+        mime="text/csv"
+    )
+
 # =============================
 # Processamento do arquivo
 # =============================
@@ -140,9 +193,27 @@ if uploaded_file:
         else:
             df["Servidor"] = "Desconhecido"
 
-        # Dados para exibição e download
+        colunas_padrao = [
+            "cargoJudicial", "ultimoMovimento", "podeMovimentarEmLote",
+            "podeMinutarEmLote", "podeIntimarEmLote", "podeDesignarAudienciaEmLote",
+            "podeDesignarPericiaEmLote", "podeRenajudEmLote", "sigiloso",
+            "prioridade", "dataChegada", "conferido", "idTaskInstance",
+            "idTaskInstanceProximo", "idProcesso", "classeJudicial"
+        ]
+        colunas_disponiveis = [col for col in df.columns if col != coluna_processos]
+        colunas_padrao_existentes = [col for col in colunas_padrao if col in df.columns]
+
+        st.sidebar.subheader("Colunas adicionais para remover")
+        colunas_remover_usuario = st.sidebar.multiselect(
+            "Selecione colunas para excluir",
+            options=colunas_disponiveis,
+            default=colunas_padrao_existentes
+        )
+
+        df.drop(columns=[col for col in colunas_remover_usuario if col in df.columns], inplace=True)
+
         st.success("Arquivo processado com sucesso!")
-        st.dataframe(df.head())
+        st.dataframe(df)
 
         output_file = "processos_classificados.xlsx"
         df.to_excel(output_file, index=False)
@@ -154,5 +225,8 @@ if uploaded_file:
                 file_name="processos_classificados.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+        exibir_dashboard_assunto_principal(df)
+        exibir_analise_nome_tarefa(df)
 else:
     st.info("Envie um arquivo para iniciar a análise.")
