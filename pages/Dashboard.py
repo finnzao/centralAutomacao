@@ -1,9 +1,9 @@
-# pages/Dashboard.py - Versão corrigida completa
+# pages/Dashboard.py - Versão completa final com formatação
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from utils.fileHandler import FileHandler, diagnosticar_arquivo, extrair_ano_processo_melhorado, classificar_meta2_melhorado, atribuir_servidor_melhorado
+from utils.fileHandler import FileHandler, diagnosticar_arquivo, extrair_ano_processo_melhorado, classificar_meta2_melhorado, atribuir_servidor_melhorado, formatar_numero_processo
 import json
 import os
 import re
@@ -21,6 +21,11 @@ st.title(":bar_chart: Dashboard - Análise de Processos")
 st.markdown("""
 As planilhas recomendadas para upload são aquelas que contêm o acervo completo de todos os processos, 
 utilizando a extensão PJe R+.
+
+**Formatos suportados:**
+- Com formatação: `0000046-15.2017.8.05.0216`
+- Variação: `0000046-15.2017.805.0216`
+- Sem formatação: `00000461520178050216`
 """)
 
 # =============================
@@ -96,9 +101,53 @@ ano_meta2 = st.sidebar.number_input("Ano a partir do qual os processos não são
 configuracao["ano_meta2"] = ano_meta2
 
 # =============================
+# Configuração de formatação da coluna "Número Formatado"
+# =============================
+st.sidebar.subheader("🔧 Formatação da Coluna")
+formato_opcoes = {
+    "padrao_cnj": "0000046-15.2017.8.05.0216 (Padrão CNJ)",
+    "tribunal_805": "0000046-15.2017.805.0216 (Variação 805)",
+    "sem_formatacao": "00000461520178050216 (Sem formatação)"
+}
+
+formato_escolhido = st.sidebar.selectbox(
+    "Formato para coluna 'Número Formatado':",
+    options=list(formato_opcoes.keys()),
+    format_func=lambda x: formato_opcoes[x],
+    index=0
+)
+
+# Exemplo do formato escolhido
+st.sidebar.write(f"**Exemplo:** `{formato_opcoes[formato_escolhido].split(' ')[0]}`")
+
+# =============================
 # Checkbox para habilitar modo debug
 # =============================
 debug_mode = st.sidebar.checkbox("🐛 Modo Debug (mostra informações detalhadas)")
+
+# =============================
+# Teste rápido de formatos
+# =============================
+if st.sidebar.button("🧪 Testar Formatos de Número"):
+    st.sidebar.write("**Teste dos formatos:**")
+    
+    # Teste com números de exemplo
+    numeros_teste = [
+        "0000046-15.2017.8.05.0216",
+        "0000046-15.2017.805.0216", 
+        "00000461520178050216",
+        "0000067-88.2017.8.05.0216", 
+        "00000678820178050216"
+    ]
+    
+    for numero in numeros_teste:
+        # Testar extração de dígito
+        digito = FileHandler.extrair_digito_simples(numero)
+        # Testar extração de ano
+        ano = extrair_ano_processo_melhorado(numero)
+        
+        st.sidebar.write(f"📄 `{numero[:12]}...`")
+        st.sidebar.write(f"   Dígito: {digito}, Ano: {ano}")
 
 # =============================
 # Funções auxiliares
@@ -113,8 +162,8 @@ def exibir_dashboard_assunto_principal(df: pd.DataFrame):
     assunto_counts = df["assuntoPrincipal"].value_counts().reset_index()
     assunto_counts.columns = ["Assunto", "Quantidade"]
 
-    fig = px.pie(assunto_counts, names="Assunto", values="Quantidade", title="Distribuição dos Assuntos Principais")
-    st.plotly_chart(fig)
+    fig = px.pie(assunto_counts.head(10), names="Assunto", values="Quantidade", title="Top 10 Assuntos Principais")
+    st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("#### Tabela de Frequência por Assunto")
     st.dataframe(assunto_counts)
@@ -137,7 +186,7 @@ def exibir_dashboard_assunto_principal(df: pd.DataFrame):
         st.download_button(
             label=f"Baixar processos do assunto: {assunto_selecionado}",
             data=buffer,
-            file_name=f"{assunto_selecionado}_processos.xlsx",
+            file_name=f"{assunto_selecionado.replace('/', '_')}_processos.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
@@ -172,7 +221,7 @@ def exibir_analise_nome_tarefa(df: pd.DataFrame):
     )
 
 def exibir_dashboard_servidores(df: pd.DataFrame):
-    """Novo dashboard para análise por servidor"""
+    """Dashboard para análise por servidor"""
     st.subheader("👥 Análise por Servidor")
     
     servidor_counts = df["Servidor"].value_counts().reset_index()
@@ -191,10 +240,46 @@ def exibir_dashboard_servidores(df: pd.DataFrame):
         meta2_servidor = df[df["Meta 2 Classificacao"] == "Meta 2"]["Servidor"].value_counts().reset_index()
         meta2_servidor.columns = ["Servidor", "Processos Meta 2"]
         
-        fig2 = px.bar(meta2_servidor, x="Servidor", y="Processos Meta 2", title="Processos Meta 2 por Servidor")
-        st.plotly_chart(fig2, use_container_width=True)
-        
-        st.dataframe(meta2_servidor)
+        if len(meta2_servidor) > 0:
+            fig2 = px.bar(meta2_servidor, x="Servidor", y="Processos Meta 2", title="Processos Meta 2 por Servidor")
+            st.plotly_chart(fig2, use_container_width=True)
+            
+            st.dataframe(meta2_servidor)
+        else:
+            st.info("Nenhum processo Meta 2 encontrado para análise por servidor.")
+
+def exibir_analise_anos(df: pd.DataFrame):
+    """Nova análise por anos"""
+    st.subheader("📅 Análise por Ano dos Processos")
+    
+    if "Ano Processo" not in df.columns:
+        st.warning("Coluna 'Ano Processo' não encontrada.")
+        return
+    
+    # Remover anos não identificados para o gráfico
+    df_anos = df[df["Ano Processo"].notna()]
+    
+    if len(df_anos) == 0:
+        st.warning("Nenhum ano foi identificado nos processos.")
+        return
+    
+    ano_counts = df_anos["Ano Processo"].value_counts().sort_index().reset_index()
+    ano_counts.columns = ["Ano", "Quantidade"]
+    
+    fig = px.line(ano_counts, x="Ano", y="Quantidade", title="Distribuição de Processos por Ano", markers=True)
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Tabela de anos
+    st.dataframe(ano_counts)
+    
+    # Estatísticas
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Ano mais antigo", int(df_anos["Ano Processo"].min()))
+    with col2:
+        st.metric("Ano mais recente", int(df_anos["Ano Processo"].max()))
+    with col3:
+        st.metric("Anos diferentes", df_anos["Ano Processo"].nunique())
 
 # =============================
 # Processamento do arquivo
@@ -234,13 +319,16 @@ if uploaded_file:
             if coluna_processos not in df.columns:
                 st.error(f"❌ A coluna '{coluna_processos}' não foi encontrada no arquivo!")
                 st.write("**Colunas disponíveis:**")
-                st.write(list(df.columns))
+                colunas_disponiveis = list(df.columns)
+                for i, col in enumerate(colunas_disponiveis):
+                    st.write(f"{i+1}. `{col}`")
                 
                 # Sugerir colunas similares
                 colunas_similares = [col for col in df.columns if 'processo' in col.lower() or 'numero' in col.lower()]
                 if colunas_similares:
                     st.write("**Colunas que podem conter números de processo:**")
-                    st.write(colunas_similares)
+                    for col in colunas_similares:
+                        st.write(f"- `{col}`")
                 st.stop()
 
             # Extrair ano do processo com função melhorada
@@ -277,9 +365,18 @@ if uploaded_file:
                 st.warning("⚠️ Coluna 'Dígito' não encontrada. Todos os processos serão marcados como 'Servidor não identificado'.")
                 df["Servidor"] = "Servidor não identificado"
 
-            # Criar coluna de número formatado se não existir
-            if "Número Formatado" not in df.columns:
-                df["Número Formatado"] = df[coluna_processos]
+            # Criar coluna de número formatado com formato escolhido pelo usuário
+            if debug_mode:
+                st.write(f"🐛 **DEBUG**: Aplicando formato '{formato_escolhido}' aos números...")
+            
+            df["Número Formatado"] = df[coluna_processos].apply(
+                lambda x: formatar_numero_processo(x, formato_escolhido)
+            )
+            
+            if debug_mode:
+                st.write("🐛 **DEBUG**: Exemplos de números formatados:")
+                for i, (original, formatado) in enumerate(zip(df[coluna_processos].head(3), df["Número Formatado"].head(3))):
+                    st.write(f"  {i+1}: `{original}` → `{formatado}`")
 
             # Remover colunas desnecessárias
             colunas_padrao = [
@@ -292,14 +389,15 @@ if uploaded_file:
             colunas_disponiveis = [col for col in df.columns if col != coluna_processos]
             colunas_padrao_existentes = [col for col in colunas_padrao if col in df.columns]
 
-            st.sidebar.subheader("Colunas adicionais para remover")
+            st.sidebar.subheader("Colunas para remover")
             colunas_remover_usuario = st.sidebar.multiselect(
                 "Selecione colunas para excluir",
                 options=colunas_disponiveis,
                 default=colunas_padrao_existentes
             )
 
-            df.drop(columns=[col for col in colunas_remover_usuario if col in df.columns], inplace=True)
+            if colunas_remover_usuario:
+                df.drop(columns=[col for col in colunas_remover_usuario if col in df.columns], inplace=True)
 
             st.success("✅ Arquivo processado com sucesso!")
             
@@ -331,10 +429,24 @@ if uploaded_file:
                 with st.expander("⚠️ Problemas Identificados"):
                     for problema in problemas:
                         st.write(problema)
+                    
+                    # Mostrar alguns exemplos de problemas
+                    if "Dígito" in df.columns:
+                        problemas_digito = df[df["Dígito"] == 0][coluna_processos].head(3)
+                        if len(problemas_digito) > 0:
+                            st.write("**Exemplos de números sem dígito identificado:**")
+                            for numero in problemas_digito:
+                                st.code(numero)
             
             # Mostrar amostra dos dados
             st.subheader("📋 Amostra dos Dados Processados")
-            st.dataframe(df.head())
+            # Reorganizar colunas para melhor visualização
+            colunas_importantes = ['Dígito', 'Ano Processo', 'Meta 2 Classificacao', 'Servidor', 'Número Formatado']
+            colunas_disponiveis = [col for col in colunas_importantes if col in df.columns]
+            outras_colunas = [col for col in df.columns if col not in colunas_importantes]
+            
+            df_display = df[colunas_disponiveis + outras_colunas]
+            st.dataframe(df_display.head())
 
             # Download do arquivo processado
             output_file = "processos_classificados.xlsx"
@@ -352,6 +464,9 @@ if uploaded_file:
             st.divider()
             exibir_dashboard_servidores(df)
             
+            st.divider()
+            exibir_analise_anos(df)
+            
             st.divider() 
             exibir_dashboard_assunto_principal(df)
             
@@ -368,30 +483,62 @@ if uploaded_file:
             st.write("1. Verifique se o nome da coluna de processos está correto")
             st.write("2. Verifique se o arquivo está no formato correto (CSV ou Excel)")
             st.write("3. Ative o 'Modo Debug' para mais informações")
+            st.write("4. Use o botão '🧪 Testar Formatos' no sidebar para verificar se os números estão no formato esperado")
             
 else:
     st.info("📁 Envie um arquivo para iniciar a análise.")
     
     # Mostrar informações sobre o formato esperado
-    with st.expander("ℹ️ Formato esperado do arquivo"):
+    with st.expander("ℹ️ Formatos esperados do arquivo"):
         st.write("""
-        **Formato dos números de processo esperado:**
-        - Padrão: `0000046-15.2017.8.05.0216`
-        - O sistema irá extrair:
-          - **Dígito**: `15` (para atribuição de servidor)
-          - **Ano**: `2017` (para classificação Meta 2)
+        **Formatos de números de processo suportados:**
+        
+        **Formato 1 (padrão CNJ):**
+        - `0000046-15.2017.8.05.0216`
+        - O sistema extrai: Dígito = `15`, Ano = `2017`
+        
+        **Formato 2 (variação tribunal):**
+        - `0000046-15.2017.805.0216`
+        - O sistema extrai: Dígito = `15`, Ano = `2017`
+        
+        **Formato 3 (sem formatação):**
+        - `00000461520178050216` (20 dígitos)
+        - Estrutura: `NNNNNNN DD AAAA J TT OOOO`
+        - Posições: 7-8 = Dígito, 9-12 = Ano
+        - O sistema extrai: Dígito = `15`, Ano = `2017`
         
         **Colunas importantes:**
-        - Nome da coluna com números de processo (configurável no sidebar)
+        - Nome da coluna com números de processo (configurável)
         - `assuntoPrincipal` (opcional, para análise de assuntos)
         - `nomeTarefa` (opcional, para análise de tarefas)
         
         **Configuração atual:**
         - Coluna de processos: `{}`
+        - Formato de saída: {}
         - Ano Meta 2: {} (processos anteriores a este ano são Meta 2)
         - Servidores configurados: {}
         """.format(
             coluna_processos,
+            formato_opcoes[formato_escolhido],
             ano_meta2,
             list(configuracao["intervalos_servidores"].keys())
         ))
+        
+        # Mostrar teste ao vivo com formatação
+        st.write("**Teste ao vivo com formatação:**")
+        col_teste1, col_teste2 = st.columns(2)
+        
+        with col_teste1:
+            numero_teste = st.text_input("Digite um número para testar:", value="0000046-15.2017.805.0216")
+        
+        with col_teste2:
+            formato_teste = st.selectbox("Formato de saída:", options=list(formato_opcoes.keys()), format_func=lambda x: formato_opcoes[x].split(' ')[0])
+        
+        if numero_teste:
+            digito = FileHandler.extrair_digito_simples(numero_teste)
+            ano = extrair_ano_processo_melhorado(numero_teste)
+            numero_formatado = formatar_numero_processo(numero_teste, formato_teste)
+            
+            st.write(f"📊 **Resultado:**")
+            st.write(f"• Dígito = `{digito}`, Ano = `{ano}`")
+            st.write(f"• Formatado = `{numero_formatado}`")

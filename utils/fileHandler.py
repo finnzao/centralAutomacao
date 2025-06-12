@@ -1,4 +1,4 @@
-# utils/fileHandler.py - Versão corrigida completa
+# utils/fileHandler.py - Versão completa final com formatação
 
 import pandas as pd
 import re
@@ -64,7 +64,7 @@ class FileHandler:
     @staticmethod
     def preprocess_dataframe(df, config):
         """
-        Pré-processa o DataFrame com correções para o formato: 0000046-15.2017.8.05.0216
+        Pré-processa o DataFrame - VERSÃO SIMPLIFICADA
         """
         coluna_processos = config.get('coluna_processos', 'numeroProcesso')
         
@@ -85,10 +85,8 @@ class FileHandler:
         for i, numero in enumerate(df[coluna_processos].head()):
             print(f"  {i+1}: '{numero}' (tipo: {type(numero)})")
         
-        # REGEX CORRIGIDA para extrair dígito do formato: NNNNNNN-DD.AAAA.J.TT.OOOO
-        # Exemplo: 0000046-15.2017.8.05.0216 → dígito = 15
-        df['Dígito'] = df[coluna_processos].str.extract(r'\d+-(\d{2})\.\d{4}\.')[0]
-        df['Dígito'] = pd.to_numeric(df['Dígito'], errors='coerce').fillna(0).astype(int)
+        # EXTRAÇÃO SIMPLIFICADA DE DÍGITO
+        df['Dígito'] = df[coluna_processos].apply(FileHandler.extrair_digito_simples)
         
         # DEBUG: Verificar resultados da extração
         digitos_extraidos = df['Dígito'].value_counts().sort_index()
@@ -99,57 +97,186 @@ class FileHandler:
         return df
 
     @staticmethod
+    def extrair_digito_simples(numero):
+        """
+        Extração simplificada - apenas 3 padrões necessários
+        """
+        if pd.isna(numero) or str(numero).lower() == 'nan':
+            return 0
+        
+        numero_str = str(numero).strip()
+        
+        # Padrão 1: Com hífen e pontos (captura AMBOS os casos)
+        # Funciona para: 0000046-15.2017.8.05.0216 E 0000046-15.2017.805.0216
+        match1 = re.search(r'\d+-(\d{2})\.\d{4}\.', numero_str)
+        if match1:
+            return int(match1.group(1))
+        
+        # Padrão 2: 20 dígitos consecutivos
+        if re.match(r'^\d{20}$', numero_str):
+            return int(numero_str[7:9])  # Posições 7-8
+        
+        # Padrão 3: Hífen + 2 dígitos (fallback)
+        match3 = re.search(r'-(\d{2})', numero_str)
+        if match3:
+            return int(match3.group(1))
+        
+        return 0
+
+    @staticmethod
     def debug_numero_processo(numero_processo):
         """
-        Função para debugar um número específico de processo.
+        Debug simplificado
         """
         print(f"\nDEBUG DETALHADO para: '{numero_processo}'")
-        print(f"  Tipo: {type(numero_processo)}")
-        print(f"  Comprimento: {len(str(numero_processo))}")
+        numero_str = str(numero_processo).strip()
         
-        # Testar diferentes padrões
         patterns = {
-            'Dígito (formato atual)': r'\d+-(\d{2})\.\d{4}\.',
-            'Ano (formato atual)': r'\d+-\d{2}\.(\d{4})\.',
-            'CNJ completo': r'(\d+)-(\d{2})\.(\d{4})\.(\d)\.(\d{2})\.(\d{4})',
+            'Hífen + pontos': r'\d+-(\d{2})\.\d{4}\.',
+            '20 dígitos': r'^\d{20}$',
+            'Hífen + 2 dígitos': r'-(\d{2})',
         }
         
         for nome, pattern in patterns.items():
-            match = re.search(pattern, str(numero_processo))
+            match = re.search(pattern, numero_str)
             if match:
-                print(f"  ✓ {nome}: {match.groups()}")
+                print(f"  ✓ {nome}: {match.groups() if hasattr(match, 'groups') else 'Match'}")
             else:
                 print(f"  ✗ {nome}: não encontrado")
 
 # =============================================================================
-# FUNÇÕES AUXILIARES PARA O DASHBOARD
+# FUNÇÕES DE FORMATAÇÃO DE NÚMEROS
+# =============================================================================
+
+def formatar_numero_processo(numero, formato_destino="padrao_cnj"):
+    """
+    Formata um número de processo para o formato escolhido pelo usuário.
+    
+    Args:
+        numero: Número do processo (qualquer formato)
+        formato_destino: "padrao_cnj", "tribunal_805", ou "sem_formatacao"
+    
+    Returns:
+        Número formatado conforme escolha do usuário
+    """
+    if pd.isna(numero) or str(numero).lower() == 'nan':
+        return numero
+    
+    numero_str = str(numero).strip()
+    
+    # Extrair componentes do número
+    componentes = extrair_componentes_numero(numero_str)
+    if not componentes:
+        return numero  # Retorna original se não conseguir extrair
+    
+    # Aplicar formatação escolhida
+    if formato_destino == "padrao_cnj":
+        # Formato: 0000046-15.2017.8.05.0216
+        return f"{componentes['sequencial']:07d}-{componentes['digito']:02d}.{componentes['ano']}.{componentes['segmento']}.{componentes['tribunal']:02d}.{componentes['origem']:04d}"
+    
+    elif formato_destino == "tribunal_805":
+        # Formato: 0000046-15.2017.805.0216
+        tribunal_formatado = f"{componentes['segmento']}{componentes['tribunal']:02d}"
+        return f"{componentes['sequencial']:07d}-{componentes['digito']:02d}.{componentes['ano']}.{tribunal_formatado}.{componentes['origem']:04d}"
+    
+    elif formato_destino == "sem_formatacao":
+        # Formato: 00000461520178050216
+        return f"{componentes['sequencial']:07d}{componentes['digito']:02d}{componentes['ano']}{componentes['segmento']}{componentes['tribunal']:02d}{componentes['origem']:04d}"
+    
+    else:
+        return numero  # Formato inválido, retorna original
+
+def extrair_componentes_numero(numero_str):
+    """
+    Extrai todos os componentes de um número de processo.
+    
+    Returns:
+        Dict com: sequencial, digito, ano, segmento, tribunal, origem
+        Ou None se não conseguir extrair
+    """
+    # Padrão 1: Com formatação CNJ padrão (0000046-15.2017.8.05.0216)
+    match1 = re.match(r'(\d{7})-(\d{2})\.(\d{4})\.(\d)\.(\d{2})\.(\d{4})', numero_str)
+    if match1:
+        return {
+            'sequencial': int(match1.group(1)),
+            'digito': int(match1.group(2)),
+            'ano': int(match1.group(3)),
+            'segmento': int(match1.group(4)),
+            'tribunal': int(match1.group(5)),
+            'origem': int(match1.group(6))
+        }
+    
+    # Padrão 2: Com formatação variação (0000046-15.2017.805.0216)
+    match2 = re.match(r'(\d{7})-(\d{2})\.(\d{4})\.(\d{3})\.(\d{4})', numero_str)
+    if match2:
+        tribunal_str = match2.group(4)  # "805"
+        segmento = int(tribunal_str[0])  # "8"
+        tribunal = int(tribunal_str[1:3])  # "05"
+        return {
+            'sequencial': int(match2.group(1)),
+            'digito': int(match2.group(2)),
+            'ano': int(match2.group(3)),
+            'segmento': segmento,
+            'tribunal': tribunal,
+            'origem': int(match2.group(5))
+        }
+    
+    # Padrão 3: Sem formatação (00000461520178050216)
+    apenas_digitos = re.sub(r'\D', '', numero_str)
+    if len(apenas_digitos) == 20:
+        return {
+            'sequencial': int(apenas_digitos[0:7]),
+            'digito': int(apenas_digitos[7:9]),
+            'ano': int(apenas_digitos[9:13]),
+            'segmento': int(apenas_digitos[13]),
+            'tribunal': int(apenas_digitos[14:16]),
+            'origem': int(apenas_digitos[16:20])
+        }
+    
+    return None
+
+# =============================================================================
+# FUNÇÕES AUXILIARES SIMPLIFICADAS
 # =============================================================================
 
 def extrair_ano_processo_melhorado(numero):
     """
-    Versão corrigida para extrair ano do formato: 0000046-15.2017.8.05.0216
+    Extração de ano simplificada
     """
     if pd.isna(numero) or numero == '' or str(numero).lower() == 'nan':
         return None
     
-    numero_str = str(numero)
+    numero_str = str(numero).strip()
     
-    # REGEX CORRIGIDA: buscar ano de 4 dígitos após o dígito verificador
-    # Formato: NNNNNNN-DD.AAAA.J.TT.OOOO
-    match = re.search(r'\d+-\d{2}\.(\d{4})\.', numero_str)
-    if match:
-        ano = int(match.group(1))
-        # Validar se é um ano razoável (entre 1990 e ano atual + 5)
-        import datetime
-        ano_atual = datetime.datetime.now().year
-        if 1990 <= ano <= ano_atual + 5:
+    # Padrão 1: Com hífen e pontos (funciona para ambos os casos)
+    match1 = re.search(r'\d+-\d{2}\.(\d{4})\.', numero_str)
+    if match1:
+        ano = int(match1.group(1))
+        if 1990 <= ano <= 2030:
+            return ano
+    
+    # Padrão 2: 20 dígitos consecutivos
+    apenas_digitos = re.sub(r'\D', '', numero_str)
+    if len(apenas_digitos) == 20:
+        try:
+            ano = int(apenas_digitos[9:13])  # Posições 9-12
+            if 1990 <= ano <= 2030:
+                return ano
+        except ValueError:
+            pass
+    
+    # Padrão 3: Fallback - qualquer ano de 4 dígitos
+    anos_encontrados = re.findall(r'(20\d{2}|19\d{2})', numero_str)
+    if anos_encontrados:
+        ano = int(anos_encontrados[0])
+        if 1990 <= ano <= 2030:
             return ano
     
     return None
 
 def classificar_meta2_melhorado(ano_processo, ano_meta2):
     """
-    Versão melhorada da classificação Meta 2.
+    Classificação Meta 2
     """
     if ano_processo is None:
         return "Ano não identificado"
@@ -160,7 +287,7 @@ def classificar_meta2_melhorado(ano_processo, ano_meta2):
 
 def atribuir_servidor_melhorado(digito, configuracao):
     """
-    Versão melhorada com debug para atribuição de servidor.
+    Atribuição de servidor
     """
     if pd.isna(digito) or digito == 0:
         return "Dígito não identificado"
@@ -173,57 +300,26 @@ def atribuir_servidor_melhorado(digito, configuracao):
     
     return f"Servidor não configurado (dígito: {digito})"
 
-# =============================================================================
-# FUNÇÃO DE DIAGNÓSTICO COMPLETO
-# =============================================================================
-
 def diagnosticar_arquivo(df, config):
     """
-    Função para diagnosticar problemas no processamento do arquivo.
+    Diagnóstico simplificado
     """
     print("=" * 50)
-    print("DIAGNÓSTICO COMPLETO DO ARQUIVO")
+    print("DIAGNÓSTICO DO ARQUIVO")
     print("=" * 50)
     
-    # 1. Informações básicas
-    print(f"1. INFORMAÇÕES BÁSICAS:")
-    print(f"   - Linhas: {len(df)}")
-    print(f"   - Colunas: {len(df.columns)}")
-    print(f"   - Colunas: {list(df.columns)}")
-    
-    # 2. Verificar coluna de processos
     coluna_processos = config.get('coluna_processos', 'numeroProcesso')
-    print(f"\n2. COLUNA DE PROCESSOS:")
-    print(f"   - Procurando: '{coluna_processos}'")
-    print(f"   - Existe: {coluna_processos in df.columns}")
+    print(f"Linhas: {len(df)}, Colunas: {len(df.columns)}")
+    print(f"Coluna de processos: {coluna_processos}")
     
     if coluna_processos in df.columns:
-        print(f"   - Valores não nulos: {df[coluna_processos].notna().sum()}")
-        print(f"   - Primeiros 3 valores:")
+        print(f"Primeiros 3 números:")
         for i, val in enumerate(df[coluna_processos].head(3)):
-            print(f"     {i+1}: '{val}'")
+            print(f"  {i+1}: '{val}'")
             FileHandler.debug_numero_processo(val)
     
-    # 3. Verificar extração de dígitos
     if 'Dígito' in df.columns:
-        print(f"\n3. EXTRAÇÃO DE DÍGITOS:")
-        print(f"   - Dígitos únicos: {sorted(df['Dígito'].unique())}")
-        print(f"   - Dígitos = 0: {(df['Dígito'] == 0).sum()}")
-        print(f"   - Distribuição:")
-        print(df['Dígito'].value_counts().sort_index())
-    
-    # 4. Verificar extração de anos
-    if 'Ano Processo' in df.columns:
-        print(f"\n4. EXTRAÇÃO DE ANOS:")
-        anos_unicos = df['Ano Processo'].dropna().unique()
-        print(f"   - Anos únicos: {sorted(anos_unicos) if len(anos_unicos) > 0 else 'Nenhum'}")
-        print(f"   - Anos não identificados: {df['Ano Processo'].isna().sum()}")
-    
-    # 5. Verificar configuração de servidores
-    print(f"\n5. CONFIGURAÇÃO DE SERVIDORES:")
-    intervalos = config.get("intervalos_servidores", {})
-    print(f"   - Servidores configurados: {list(intervalos.keys())}")
-    for servidor, ints in intervalos.items():
-        print(f"   - {servidor}: {ints}")
+        print(f"Dígitos encontrados: {sorted(df['Dígito'].unique())}")
+        print(f"Dígitos não extraídos: {(df['Dígito'] == 0).sum()}")
     
     return df
