@@ -2,13 +2,13 @@ import streamlit as st
 
 # Configuração da página
 st.set_page_config(
-    page_title="Central de Automação de Processos",
+    page_title="Tratamento de dados Processos",
     page_icon="📂",
     layout="wide",
 )
 
 # Título principal
-st.title("📂 Bem-vindo à Central de Automação de Processos")
+st.title("📂 Bem-vindo à Central de Analise de planilhas processuais")
 
 # Introdução
 st.markdown("""
