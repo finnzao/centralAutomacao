@@ -1,9 +1,10 @@
-# pages/Dashboard.py - Versão completa final com formatação
+# pages/Dashboard.py - Versão completa final com cache
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from utils.fileHandler import FileHandler, diagnosticar_arquivo, extrair_ano_processo_melhorado, classificar_meta2_melhorado, atribuir_servidor_melhorado, formatar_numero_processo
+from utils.cache_utils import carregar_config, salvar_config, obter_config_session_state, atualizar_config
 import json
 import os
 import re
@@ -34,50 +35,47 @@ utilizando a extensão PJe R+.
 st.sidebar.header(":open_file_folder: Upload e Configurações")
 uploaded_file = st.sidebar.file_uploader("Envie o arquivo de processos (CSV ou Excel)", type=["csv", "xlsx"])
 
-CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
-
-if os.path.exists(CONFIG_FILE):
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-        configuracao = json.load(f)
-else:
-    configuracao = {
-        "intervalos_servidores": {
-            "ABEL": [[1, 19]],
-            "CARLOS": [[20, 39]],
-            "JACKMARA": [[40, 59]],
-            "LEIDIANE": [[60, 79]],
-            "TANIA": [[80, 99]]
-        },
-        "coluna_processos": "numeroProcesso",
-        "ano_meta2": 2018
-    }
+# =============================
+# Configuração com cache
+# =============================
+# Inicializar configuração do cache
+configuracao = obter_config_session_state()
 
 coluna_processos = st.sidebar.text_input("Nome da coluna de número do processo:", value=configuracao.get("coluna_processos", "numeroProcesso"))
-configuracao["coluna_processos"] = coluna_processos
+
+# Atualizar configuração no cache
+atualizar_config({"coluna_processos": coluna_processos})
 
 st.sidebar.subheader(":busts_in_silhouette: Configuração dos Servidores")
 servidores = configuracao["intervalos_servidores"]
 
+# Variável para controlar mudanças nos servidores
+servidores_alterados = False
+
 for servidor in list(servidores.keys()):
     with st.sidebar.expander(f"Servidor: {servidor}"):
         novo_nome = st.text_input(f"Editar nome do servidor ({servidor}):", value=servidor, key=f"nome_{servidor}")
-        if novo_nome != servidor:
+        if novo_nome != servidor and novo_nome.strip() != "":
             servidores[novo_nome] = servidores.pop(servidor)
             servidor = novo_nome
+            servidores_alterados = True
 
         intervalos = servidores[servidor]
         for i, intervalo in enumerate(intervalos):
             col1, col2 = st.columns(2)
             min_val = col1.number_input(f"Dígito Mínimo ({i+1})", value=intervalo[0], key=f"min_{servidor}_{i}")
             max_val = col2.number_input(f"Dígito Máximo ({i+1})", value=intervalo[1], key=f"max_{servidor}_{i}")
-            intervalos[i] = [min_val, max_val]
+            intervalos[i] = [int(min_val), int(max_val)]
 
         if st.button(f"Adicionar intervalo para {servidor}", key=f"add_{servidor}"):
             intervalos.append([0, 0])
+            servidores_alterados = True
+            st.rerun()
 
         if st.button(f"Remover servidor {servidor}", key=f"remove_{servidor}"):
             del servidores[servidor]
-            break
+            servidores_alterados = True
+            st.rerun()
 
 with st.sidebar.expander("Adicionar novo servidor"):
     novo_servidor = st.text_input("Nome do novo servidor:", key="new_server")
@@ -86,19 +84,34 @@ with st.sidebar.expander("Adicionar novo servidor"):
             st.warning("Esse servidor já existe.")
         else:
             servidores[novo_servidor] = [[0, 0]]
+            servidores_alterados = True
             st.success(f"Servidor {novo_servidor} adicionado com sucesso!")
+            st.rerun()
 
-if st.sidebar.button("Salvar configuração"):
-    configuracao["coluna_processos"] = coluna_processos
-    configuracao["intervalos_servidores"] = servidores
-    configuracao["ano_meta2"] = configuracao.get("ano_meta2", 2018)
-    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(configuracao, f, indent=4)
-    st.sidebar.success("Configuração salva com sucesso!")
+# Atualizar servidores no cache se houve alterações
+if servidores_alterados:
+    atualizar_config({"intervalos_servidores": servidores})
 
+# Configuração de Meta 2
 st.sidebar.subheader(":calendar: Configuração de Meta 2")
 ano_meta2 = st.sidebar.number_input("Ano a partir do qual os processos não são Meta 2:", min_value=1900, max_value=2100, value=configuracao.get("ano_meta2", 2018))
-configuracao["ano_meta2"] = ano_meta2
+
+# Atualizar no cache
+atualizar_config({"ano_meta2": ano_meta2})
+
+if st.sidebar.button("Salvar configuração"):
+    # Atualizar configuração completa
+    config_atualizada = {
+        "coluna_processos": coluna_processos,
+        "intervalos_servidores": servidores,
+        "ano_meta2": ano_meta2
+    }
+    
+    if salvar_config(config_atualizada):
+        st.sidebar.success("✅ Configuração salva no cache!")
+        st.sidebar.info("💾 Backup automático criado")
+    else:
+        st.sidebar.error("❌ Erro ao salvar configuração")
 
 # =============================
 # Configuração de formatação da coluna "Número Formatado"
@@ -356,7 +369,7 @@ if uploaded_file:
                     digitos_counts = df["Dígito"].value_counts().sort_index()
                     st.write(f"🐛 **DEBUG**: Dígitos encontrados: {dict(digitos_counts)}")
                 
-                df["Servidor"] = df["Dígito"].apply(lambda x: atribuir_servidor_melhorado(x, configuracao))
+                df["Servidor"] = df["Dígito"].apply(lambda x: atribuir_servidor_melhorado(x, obter_config_session_state()))
                 
                 if debug_mode:
                     servidor_counts = df["Servidor"].value_counts()
@@ -521,7 +534,7 @@ else:
             coluna_processos,
             formato_opcoes[formato_escolhido],
             ano_meta2,
-            list(configuracao["intervalos_servidores"].keys())
+            list(obter_config_session_state()["intervalos_servidores"].keys())
         ))
         
         # Mostrar teste ao vivo com formatação

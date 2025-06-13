@@ -1,10 +1,11 @@
-# pages/Configuração de Intervalos.py - Versão completa final com formatação
+# pages/Configuração de Intervalos.py - Versão completa final com cache
 
 import streamlit as st
 import json
 import os
 import pandas as pd
 from utils.fileHandler import FileHandler, atribuir_servidor_melhorado, formatar_numero_processo
+from utils.cache_utils import carregar_config, salvar_config, obter_config_session_state, atualizar_config
 
 # Configuração da página com título personalizado
 st.set_page_config(
@@ -32,22 +33,11 @@ CONFIG_FILE = os.path.join(os.path.dirname(__file__), "config.json")
 def atribuir_servidor(digito, configuracao):
     return atribuir_servidor_melhorado(digito, configuracao)
 
-# Inicializar o estado
-if "configuracao" not in st.session_state:
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-            st.session_state.configuracao = json.load(f)
-    else:
-        st.session_state.configuracao = {
-            "intervalos_servidores": {
-                "ABEL": [[1, 19]],
-                "CARLOS": [[20, 39]],
-                "JACKMARA": [[40, 59]],
-                "LEIDIANE": [[60, 79]],
-                "TANIA": [[80, 99]]
-            },
-            "coluna_processos": "numeroProcesso"
-        }
+# =============================
+# Configuração com cache
+# =============================
+# Inicializar configuração do cache
+configuracao = obter_config_session_state()
 
 # Inicializa o estado de processamento
 if "is_processing" not in st.session_state:
@@ -59,12 +49,11 @@ st.sidebar.header("Configuração")
 # Input para nome da coluna e atualização no estado
 coluna_processos = st.sidebar.text_input(
     "Nome da coluna dos processos:",
-    value=st.session_state.configuracao.get("coluna_processos", "numeroProcesso")
+    value=configuracao.get("coluna_processos", "numeroProcesso")
 )
 
-# Atualiza a configuração no estado
-if coluna_processos != st.session_state.configuracao["coluna_processos"]:
-    st.session_state.configuracao["coluna_processos"] = coluna_processos
+# Atualizar configuração no cache
+atualizar_config({"coluna_processos": coluna_processos})
 
 # Teste rápido de número no sidebar com formatação
 st.sidebar.subheader("🧪 Teste Rápido com Formatação")
@@ -86,7 +75,7 @@ formato_teste = st.sidebar.selectbox(
 if numero_teste:
     digito = FileHandler.extrair_digito_simples(numero_teste)
     st.sidebar.write(f"**Dígito extraído:** {digito}")
-    servidor = atribuir_servidor(digito, st.session_state.configuracao)
+    servidor = atribuir_servidor(digito, obter_config_session_state())
     st.sidebar.write(f"**Servidor:** {servidor}")
     
     # Mostrar número formatado
@@ -95,7 +84,7 @@ if numero_teste:
 
 # Configuração de intervalos de servidores
 st.sidebar.subheader("Configuração de Servidores")
-servidores = st.session_state.configuracao["intervalos_servidores"]
+servidores = configuracao["intervalos_servidores"]
 
 # Listar servidores e intervalos
 for servidor, intervalos in list(servidores.items()):
@@ -188,7 +177,7 @@ with col1:
         max_value=99, 
         value=15
     )
-    servidor_atribuido = atribuir_servidor(digito_teste, st.session_state.configuracao)
+    servidor_atribuido = atribuir_servidor(digito_teste, obter_config_session_state())
     st.write(f"Dígito **{digito_teste}** → **{servidor_atribuido}**")
 
 with col2:
@@ -198,7 +187,7 @@ with col2:
     )
     if numero_completo_teste:
         digito_extraido = FileHandler.extrair_digito_simples(numero_completo_teste)
-        servidor_extraido = atribuir_servidor(digito_extraido, st.session_state.configuracao)
+        servidor_extraido = atribuir_servidor(digito_extraido, obter_config_session_state())
         st.write(f"Número: `{numero_completo_teste[:10]}...`")
         st.write(f"Dígito: **{digito_extraido}**")
         st.write(f"Servidor: **{servidor_extraido}**")
@@ -219,7 +208,7 @@ with col3:
 st.subheader("🗺️ Mapa de Distribuição")
 distribuicao = {}
 for digito in range(0, 100):
-    servidor = atribuir_servidor(digito, st.session_state.configuracao)
+    servidor = atribuir_servidor(digito, obter_config_session_state())
     if servidor not in distribuicao:
         distribuicao[servidor] = []
     distribuicao[servidor].append(digito)
@@ -268,11 +257,11 @@ if uploaded_file:
         file_type = "xlsx" if uploaded_file.name.endswith(".xlsx") else "csv"
         
         # Usar FileHandler para ler e pré-processar o arquivo
-        df = FileHandler.read_file(uploaded_file, file_type, st.session_state.configuracao)
+        df = FileHandler.read_file(uploaded_file, file_type, obter_config_session_state())
 
         # Atribuir servidores
         df['Servidor'] = df['Dígito'].apply(
-            lambda x: atribuir_servidor(x, st.session_state.configuracao)
+            lambda x: atribuir_servidor(x, obter_config_session_state())
         )
         
         # Adicionar formatação personalizada
